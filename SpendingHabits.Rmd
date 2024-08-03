@@ -1,0 +1,426 @@
+
+─────────────────────────────── Importing Packages ─────────────────────────────── 
+
+```{r}
+install.packages("xfun")
+```
+
+```{r}
+install.packages("reshape2")
+```
+
+```{r}
+install.packages("GGally")
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lubridate)  # For date handling
+library(ggplot2)    # For visualizations
+library(reshape2)
+library(GGally)
+library(randomForest)
+library(gbm)
+library(e1071)
+library(class)
+library(FNN)
+
+```
+
+─────────────────────────────── Reading in Data ──────────────────────────── 
+
+```{r}
+data <- read_csv("Spending Habits.csv")
+head(data)
+```
+
+─────────────────────────────── Preliminary Analysis ─────────────────────────────── 
+
+```{r}
+# data types for each column
+str(data)
+```
+
+```{r}
+# Count the number of null values in each column
+null_counts <- sapply(data, function(x) sum(is.na(x)))
+null_counts
+
+```
+
+```{r}
+# categorical column names from dataset
+categorical_columns <- c("Customer Gender", "Country", "State", "Product Category", "Sub Category")
+
+# Print unique categories and their counts for categorical variables
+print("Unique Categories and Their Counts in Categorical Variables:")
+unique_category_counts <- lapply(categorical_columns, function(col) {
+  table(data[[col]], useNA = "ifany")
+})
+
+names(unique_category_counts) <- categorical_columns
+
+print(unique_category_counts)
+
+
+```
+
+```{r}
+# Summarize numeric columns
+numeric_columns <- sapply(data, is.numeric)
+
+print("Summaries of Numeric Columns:")
+summary(data[, numeric_columns])
+```
+
+
+─────────────────────────────── Data Cleaning ─────────────────────────────── 
+```{r}
+# remove 'index' and 'Column1' columns because they are unnecessary
+data <- data %>%
+  select(-index, -Column1)
+
+# Print column names to verify removal
+print("Column Names After Removal:")
+print(colnames(data))
+
+```
+
+```{r}
+# remove null values
+data <- data %>%
+  drop_na()
+
+# Print data to verify null values removal
+print("Data After Removing Null Values:")
+print(data)
+```
+
+```{r}
+# Convert 'Date' column to Date data type
+data$Date <- as.Date(data$Date, format = "%m/%d/%y")
+
+# Check the structure of the dataset to confirm the change
+str(data)
+
+```
+
+```{r}
+# Convert categorical character columns to factors
+categorical_columns <- c("Customer Gender", "Country", "State", "Product Category", "Sub Category")
+data <- data %>%
+  mutate(across(all_of(categorical_columns), as.factor))
+
+# Print data types for each column to confirm changes
+print("Data Types for Each Column:")
+str(data)
+
+```
+
+```{r}
+# Find outliers in numeric columns
+numeric_columns <- sapply(data, is.numeric)
+
+# Function to detect outliers
+find_outliers <- function(column) {
+  Q1 <- quantile(column, 0.25)
+  Q3 <- quantile(column, 0.75)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  outliers <- column[column < lower_bound | column > upper_bound]
+  return(outliers)
+}
+
+# Apply the function to each numeric column
+outliers_list <- lapply(data[, numeric_columns], find_outliers)
+
+# Print outliers for each numeric column
+print("Outliers in Numeric Columns:")
+print(outliers_list)
+```
+
+```{r}
+# Round the Unit Price column to two decimal places
+data$`Unit Price` <- round(data$`Unit Price`, 2)
+```
+
+
+────────────────────────────── Some Exploratory Data Analysis ─────────────────────────────── 
+```{r}
+# Histogram of Customer Age
+ggplot(data, aes(x = `Customer Age`)) +
+  geom_histogram(binwidth = 5, fill = "blue", color = "black") +
+  labs(title = "Distribution of Customer Age", x = "Customer Age", y = "Count")
+
+```
+
+```{r}
+# Boxplot of Revenue
+ggplot(data, aes(y = Revenue)) +
+  geom_boxplot(fill = "orange", color = "black") +
+  labs(title = "Boxplot of Revenue", y = "Revenue")
+
+```
+
+```{r}
+# Scatter plot of Quantity vs. Revenue
+ggplot(data, aes(x = Quantity, y = Revenue)) +
+  geom_point(color = "purple") +
+  labs(title = "Scatter Plot of Quantity vs. Revenue", x = "Quantity", y = "Revenue")
+
+```
+
+```{r}
+# Bar plot of Customer Gender
+ggplot(data, aes(x = `Customer Gender`)) +
+  geom_bar(fill = "green", color = "black") +
+  labs(title = "Frequency Distribution of Customer Gender", x = "Customer Gender", y = "Count")
+
+```
+
+```{r}
+# Heatmap of correlations between numeric variables
+numeric_data <- data[, numeric_columns]
+correlations <- cor(numeric_data, use = "complete.obs")
+
+ggplot(melt(correlations), aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  labs(title = "Correlation Heatmap", x = "", y = "")
+
+```
+
+```{r}
+# Pair plot of numeric variables
+ggpairs(data[, numeric_columns])
+```
+
+
+```{r}
+# Heatmaps
+numeric_data <- data[, numeric_columns]
+correlations <- cor(numeric_data, use = "complete.obs")
+
+# Melt the correlation matrix
+correlations_melted <- melt(correlations)
+
+ggplot(correlations_melted, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  labs(title = "Correlation Heatmap", x = "", y = "")
+```
+
+```{r}
+# Calculate descriptive statistics
+desc_stats <- data %>% 
+  summarise(
+    mean_age = mean(`Customer Age`),
+    median_age = median(`Customer Age`),
+    sd_age = sd(`Customer Age`),
+    var_age = var(`Customer Age`),
+    mean_revenue = mean(Revenue),
+    median_revenue = median(Revenue),
+    sd_revenue = sd(Revenue),
+    var_revenue = var(Revenue)
+  )
+print(desc_stats)
+
+```
+
+
+```{r}
+# Group by Product Category and summarize revenue
+agg_data <- data %>%
+  group_by(`Product Category`) %>%
+  summarise(
+    total_revenue = sum(Revenue),
+    avg_revenue = mean(Revenue),
+    count = n()
+  )
+print(agg_data)
+
+```
+
+```{r}
+# Calculate correlation matrix for numeric variables
+correlations <- cor(data[, numeric_columns], use = "complete.obs")
+print(correlations)
+
+```
+
+```{r}
+# Create new features from Date
+data <- data %>%
+  mutate(
+    year = year(Date),
+    month = month(Date),
+    day = day(Date)
+  )
+head(data)
+```
+
+
+
+
+─────────────────────────────── Some Statistical Analysis ─────────────────────────────── 
+```{r}
+# Independent Two-Sample T-Test: Compare the mean revenue between male and female customers
+t_test_result <- t.test(Revenue ~ `Customer Gender`, data = data)
+print(t_test_result)
+
+```
+The results of the Welch Two Sample t-test indicate that there is no significant difference in the mean revenue between male and female customers. The p-value is very high, and the confidence interval includes 0, both of which suggest that any observed difference is likely due to random variation rather than a true difference in the population means.
+
+
+```{r}
+# One-Way ANOVA: Compare the mean revenue across different product categories
+anova_result <- aov(Revenue ~ `Product Category`, data = data)
+summary(anova_result)
+
+```
+The results of the One-Way ANOVA indicate that there is a highly significant difference in the mean revenue across different product categories. The extremely low p-value and high F-value suggest that the product category has a strong effect on revenue, and the differences in means are unlikely to be due to random variation. This implies that product category is an important factor influencing revenue, and further investigation into specific category differences may be beneficial for understanding and optimizing sales strategies.
+
+
+```{r}
+# Chi-Square Test of Independence: Check if gender distribution is independent of product category
+chisq_test_result <- chisq.test(table(data$`Customer Gender`, data$`Product Category`))
+print(chisq_test_result)
+
+```
+The results of the Chi-Square Test of Independence indicate that there is no significant association between customer gender and product category. The p-value is 0.1559, which is higher than the typical significance level of 0.05. Therefore, we fail to reject the null hypothesis, implying that the distribution of product categories is independent of customer gender. In other words, customer gender does not significantly affect the choice of product category in this dataset.
+
+
+```{r}
+# Pearson Correlation: Measure the linear relationship between Quantity and Revenue
+cor_result <- cor.test(data$Quantity, data$Revenue)
+print(cor_result)
+
+```
+The results of the Pearson Correlation analysis indicate that there is a very weak and statistically insignificant linear relationship between quantity sold and revenue. The correlation coefficient is very close to 0, the p-value is greater than 0.05, and the confidence interval includes 0. Therefore, we conclude that the quantity sold does not significantly affect the revenue in this dataset.
+
+
+```{r}
+# Multiple Linear Regression: Relationship between Revenue and multiple predictors
+lm_model_multi <- lm(Revenue ~ Quantity + `Unit Cost` + `Customer Age`, data = data)
+summary(lm_model_multi)
+
+```
+The multiple linear regression analysis shows that quantity and unit cost are highly significant predictors of revenue, both having positive effects. Specifically, increasing the quantity or unit cost is associated with an increase in revenue. Customer age, however, does not have a significant impact on revenue in this model. The model explains about 78.13% of the variability in revenue, indicating a strong fit.
+
+
+─────────────────────────────── Some Modeling ─────────────────────────────── 
+```{r}
+# Linear Regression Model
+lr_model <- lm(Revenue ~ Quantity + `Unit Cost` + `Customer Age`, data = data)
+summary(lr_model)
+
+```
+From a business perspective, the analysis provides key insights. Increasing the number of units sold has a substantial and highly significant positive impact on revenue, suggesting that strategies focused on boosting sales volume, such as marketing campaigns or discounts, could effectively increase revenue. Additionally, the positive and significant effect of unit cost on revenue indicates that higher-priced products contribute more to overall revenue. This insight can inform pricing strategies and product positioning to maximize revenue. Conversely, the lack of a significant relationship between customer age and revenue suggests that age alone might not be a critical factor in driving sales, prompting businesses to consider other demographic or psychographic variables for more targeted marketing.
+
+The multiple R-squared value of 0.7813 indicates that approximately 78.13% of the variance in revenue is explained by the model, which is quite strong. However, the residual standard error of 344.5 suggests there are still some variations in revenue not captured by the model. Overall, the analysis highlights the importance of quantity and unit cost in driving revenue, while customer age appears to have a negligible effect. These insights can help businesses optimize their sales strategies and pricing models to enhance revenue growth.
+
+
+
+```{r}
+# Gradient Boosting Machine
+GBM_model <- gbm(Revenue ~ Quantity + `Unit Cost` + `Customer Age` + `Product Category`, data = data, distribution = "gaussian", n.trees = 100, interaction.depth = 4)
+summary(GBM_model)
+```
+From a business perspective, these results highlight the critical factors driving revenue. The dominant influence of unit cost suggests that pricing strategies are paramount. Businesses should focus on optimizing their pricing models to maximize revenue, ensuring that higher-priced products are strategically promoted and positioned in the market. The significant role of quantity reinforces the importance of sales volume. Marketing efforts aimed at increasing the number of units sold, such as promotions, discounts, and loyalty programs, can effectively boost revenue.
+
+The moderate impact of product category implies that while some categories may generate more revenue, they are not as critical as pricing and sales volume. Businesses should still consider product mix and category performance but prioritize pricing and quantity strategies. The minimal impact of customer age suggests that demographic factors like age may not be as crucial in driving sales, so businesses might benefit more from focusing on other customer attributes or behaviors.
+
+The GBM model underscores the importance of unit cost and quantity in driving revenue, with pricing strategies and sales volume being key areas of focus for businesses. Product category plays a lesser role, and customer age has minimal impact. These insights can help businesses refine their strategies to optimize revenue growth, emphasizing the most influential factors identified by the model.
+
+
+```{r}
+library(e1071)
+# Support Vector Regression
+SVR_model <- svm(Revenue ~ Quantity + `Unit Cost` + `Customer Age` + `Product Category`, data = data)
+summary(SVR_model)
+
+```
+The SVM model, with its use of epsilon-regression and RBF kernel, is adept at capturing the non-linear relationships between predictors and revenue. The balance of the cost parameter ensures the model is not overly complex, while the gamma parameter allows for moderate influence of individual data points. The reliance on 9391 support vectors underscores the importance of specific data points in defining the model. This model can be a powerful tool for predicting revenue, allowing businesses to understand the complex interactions between sales quantity, unit cost, customer age, and product category, thereby informing strategic decisions to optimize revenue.
+
+
+```{r}
+# K-Nearest Neighbors
+
+# Set a seed for reproducibility
+set.seed(123)
+
+# Create an index for training and test split (80% training, 20% test)
+train_index <- sample(seq_len(nrow(data)), size = 0.8 * nrow(data))
+test_index <- setdiff(seq_len(nrow(data)), train_index)
+
+# Select numeric columns for scaling
+numeric_columns <- c("Quantity", "Unit Cost", "Customer Age")
+
+# Scale the numeric columns
+scaled_data <- data
+scaled_data[numeric_columns] <- scale(data[numeric_columns])
+
+# Prepare training and test datasets
+train_data <- scaled_data[train_index, ]
+test_data <- scaled_data[test_index, ]
+
+# Define the target variable
+train_target <- data$Revenue[train_index]
+test_target <- data$Revenue[test_index]
+
+# Fit the KNN regression model (k = 5)
+knn_reg_model <- knn.reg(train = train_data[numeric_columns], test = test_data[numeric_columns], y = train_target, k = 5)
+
+# Print the first few predictions
+head(knn_reg_model$pred)
+
+```
+Non-Parametric Nature: k-NN does not make any assumptions about the underlying data distribution. It simply relies on the distance metric to find the k-nearest neighbors of a given data point and predicts the target variable (revenue) based on the average or majority vote of the neighbors.
+Distance Metric: Typically, Euclidean distance is used to find the nearest neighbors. The k value (number of neighbors) is a critical hyperparameter that needs to be chosen carefully to balance bias and variance.
+Predictions: The output values (70.6, 156.0, 110.2, 10.6, 43.8, 82.0) are the predicted revenue values for the corresponding test data points based on the k-nearest neighbors' average revenue.
+
+─────────────────────────────── Model Validation ─────────────────────────────── 
+
+```{r}
+# KNN model
+
+# Compare the first few predictions with actual values
+head(data.frame(Predicted = knn_reg_model$pred, Actual = test_target))
+
+```
+
+```{r}
+# KNN Model
+
+# Calculate performance metrics
+mae <- mean(abs(knn_reg_model$pred - test_target))
+mse <- mean((knn_reg_model$pred - test_target)^2)
+r_squared <- 1 - sum((knn_reg_model$pred - test_target)^2) / sum((test_target - mean(test_target))^2)
+
+# Print the performance metrics
+cat("Mean Absolute Error (MAE):", mae, "\n")
+cat("Mean Squared Error (MSE):", mse, "\n")
+cat("R-squared:", r_squared, "\n")
+
+```
+
+```{r}
+# KNN Model
+
+# Plot predicted vs. actual values
+plot(test_target, knn_reg_model$pred, main = "Predicted vs Actual Revenue", xlab = "Actual Revenue", ylab = "Predicted Revenue")
+abline(0, 1, col = "red")  # Add a reference line
+
+```
+
+─────────────────────────────── Saving the Cleaned Data ─────────────────────────────── 
+```{r}
+# after all the data cleaning, analysis, and modeling, we will override the old data with the new cleaned data
+
+write.csv(data, "Spending Habits.csv", row.names = FALSE)
+
+```
+
